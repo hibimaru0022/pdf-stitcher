@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>PDF Stitcher</title>
+  <style>
+    body { font-family: sans-serif; padding: 1rem; }
+    ul { list-style: none; padding: 0; }
+    li { margin-bottom: 10px; display: flex; align-items: center; gap: 0.5rem; cursor: move; }
+    img { border: 1px solid #ccc; width: 80px; height: auto; }
+  </style>
+</head>
+<body>
+  <h2>PDF出力</h2>
+  <p>フレームを並び替えて、出力対象を選んでください。</p>
+  <ul id="frame-list"></ul>
+  <button id="export-button">📄 Export PDF</button>
+  <script type="module">
+    import { PDFDocument } from 'https://cdn.skypack.dev/pdf-lib';
+
+    const listEl = document.getElementById('frame-list');
+    const exportBtn = document.getElementById('export-button');
+    let frames = [];
+
+    parent.postMessage({ pluginMessage: { type: 'request-frames' } }, '*');
+
+    window.onmessage = async (event) => {
+      const msg = event.data.pluginMessage;
+      if (msg.type === 'error') {
+        alert(msg.message);
+        return;
+      }
+      if (msg.type === 'frames-list') {
+        frames = msg.frames;
+        renderFrameList();
+      }
+    };
+
+    function renderFrameList() {
+      listEl.innerHTML = '';
+      frames.forEach(frame => {
+        const li = document.createElement('li');
+        li.setAttribute('data-id', frame.id);
+        li.innerHTML = `
+          <input type="checkbox" data-id="${frame.id}" checked>
+          <img src="${frame.thumbnail}" />
+          <span>${frame.name}</span>
+        `;
+        listEl.appendChild(li);
+      });
+      enableDragSort();
+    }
+
+    function enableDragSort() {
+      let dragged;
+      listEl.querySelectorAll('li').forEach(item => {
+        item.draggable = true;
+        item.addEventListener('dragstart', e => {
+          dragged = item;
+        });
+        item.addEventListener('dragover', e => e.preventDefault());
+        item.addEventListener('drop', e => {
+          e.preventDefault();
+          if (dragged && dragged !== item) {
+            listEl.insertBefore(dragged, item);
+          }
+        });
+      });
+    }
+
+    exportBtn.onclick = async () => {
+      const selectedIds = Array.from(document.querySelectorAll('input[type=checkbox]:checked')).map(input => input.dataset.id);
+      const sortedIds = Array.from(document.querySelectorAll('#frame-list li')).map(li => li.dataset.id);
+      const orderedFrames = sortedIds
+        .map(id => frames.find(f => f.id === id))
+        .filter(f => selectedIds.includes(f.id));
+
+      const pdfDoc = await PDFDocument.create();
+      for (const frame of orderedFrames) {
+        const pngImage = await pdfDoc.embedPng(frame.dataUrl);
+        const page = pdfDoc.addPage([frame.width, frame.height]);
+        page.drawImage(pngImage, { x: 0, y: 0, width: frame.width, height: frame.height });
+      }
+      const pdfBytes = await pdfDoc.save();
+      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'frames.pdf';
+      a.click();
+
+      parent.postMessage({ pluginMessage: { type: 'close' } }, '*');
+    }
+  </script>
+</body>
+</html>
